@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<!-- Panrama in VR -->
+<!-- https://www.panrama.net/index_en.html -->
+<!-- https://fr.wikipedia.org/wiki/Panrama -->
+<!-- Images from Philippe Jaulmes' Panrama.net website, Les Amis du Panrama, Les Ateliers du cinéma total: https://www.panrama.net/ -->
+<!-- Web viewer by Pierre Nagorny, 2025 -->
+<!-- Adapted from https://github.com/fbriggs/lifecast_public/blob/main/web/vr180.html -->
+<head>
+<title>Panrama in VR - 1966-2010 - Philippe Jaulmes</title>
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/images/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/images/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/images/favicon-16x16.png">
+<link rel="manifest" href="/assets/images/manifest.json">
+<link rel="mask-icon" href="/assets/images/safari-pinned-tab.svg" color="#5bbad5">
+<meta charset="UTF-8">
+<meta name="description" content="VR180 hemispherical photo viewer based on LifecastVR and Three.js, showcasing the Panrama of Philippe Jaulmes from 1966 to 2010.">
+<meta name="keywords" content="Panrama, cinéma total, total cinema, Jaulmes, Philippe Jaulmes, VR, VR180, hemispherical, Meta Quest, Quest, Apple Vision, Vision Pro, WebVR, WebXR, LifecastVR, Lifecast, Three.js, WebGL">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#ffffff">
+<script type="module">
+  import * as LifecastVideoPlayerPreloader from './lifecast_res/LifecastVideoPlayerPreloader.js';
+  LifecastVideoPlayerPreloader.init();
+</script>
+<script src="./dist/lifecast.min.js"></script>
+<script type="module">
+  // import * as LifecastVideoPlayer from './lifecast_res/LifecastVideoPlayer11.js';
+  const media_playlist = [
+    ["media/L'Effet Panrama - Philippe Jaulmes, Marie Diagne - 2010.jpg"],
+    ["media/Panrama - Languedoc-Roussillon terre des possibles - 1992.jpg"],
+    ["media/Omnimax 70mm - L'eau et les hommes - 1985.jpg"],
+    ["media/Panrama - Bugey - 1981.jpg"],
+    ["media/Panrama - Labyrinthe en Panrama - 1981.jpg"],
+    ["media/Panrama - 16mm - 1975.jpg"],
+    ["media/Panrama - La Grande Marée - EXPO67 - 1966_1.jpg"],
+    ["media/Panrama - La Grande Marée - EXPO67 - 1966_2.jpg"],
+    ["media/Panrama - tetec.jpg"],
+    ["media/Panrama - 06.jpg"],
+    ["media/Panrama - 07.jpg"],
+    ["media/Panrama - sphere.jpg"],
+    ["media/Panrama - forme - Gilbert Comparetti - 1983-1985.jpg"],
+    ["media/Panrama - 01.jpg"],
+    ["media/Panrama - 03.jpg"],
+    ["media/Panrama - 05.jpg"],
+  ];
+  LifecastVideoPlayer.init({
+    _format: "180",  // "vr180", "sbs", "180"
+    _media_playlist: media_playlist,
+  });
+</script>
+
+</head>
+<body style="background-color: black;"></body>
+</html>
