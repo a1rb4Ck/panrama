@@ -1,15 +1,31 @@
 # Panrama in VR180
 
-[Panrama in omnispherical VR](https://a1rb4ck.github.io/panrama/)
+A web-based VR viewer for exploring [Philippe Jaulmes' Panrama](https://www.panrama.net/) collection (1966-2010) - a unique hemispherical cinematographic format that captures immersive 180° panoramic content.
 
-[Blog post on the Panrama](hhttps://a1rb4ck.github.io/Panrama-in-VR/)
+**[View in VR](https://a1rb4ck.github.io/panrama/)** | [Blog post](https://a1rb4ck.github.io/Panrama-in-VR/) | [About Panrama](https://fr.wikipedia.org/wiki/Panrama)
 
-You can view the images in Virtual Reality on any HMD (Meta Quest 2 or 3, Pico, Apple Vision Pro, etc.).
-Just use the link above in the headset web browser.
+## Viewing
 
-If you do not have a headset, you will lose the stereoscopic experience, but you can still explore the hemispherical (left eye image) in your web browser.
+**VR Headset (recommended):** Open the link above in your headset browser (Meta Quest, Apple Vision Pro, Pico, etc.) for the full stereoscopic 3D experience.
 
-The web viewer is based on [LifeCastVR](https://github.com/fbriggs/lifecast_public/tree/main/web) open-sourced works, with the incredible [ThreeJS](https://threejs.org/examples/?q=webxr#webxr_vr_video) WebGL WebXR library.
+**Desktop/Mobile:** You can explore the hemispherical view (left eye only) in any browser.
+
+## Controls
+
+| Platform | Action | Control |
+|----------|--------|---------|
+| Desktop | Look around | Mouse drag / Orbit |
+| Desktop | Zoom | Scroll wheel |
+| Desktop | Navigate images | Arrow keys or buttons |
+| VR | Navigate images | A button (next) / B button (previous) |
+| VR | Navigate images | Trigger (next) / Grip (previous) |
+| VR | Hand tracking | Pinch gestures for scale/rotate |
+
+## Credits
+
+The web viewer is adapted from [LifeCastVR](https://github.com/fbriggs/lifecast_public/tree/main/web) using [Three.js](https://threejs.org/) WebGL/WebXR.
+
+Images from Philippe Jaulmes' [Panrama.net](https://www.panrama.net/), Les Amis du Panrama, Les Ateliers du cinéma total.
 
 ## Build
 
