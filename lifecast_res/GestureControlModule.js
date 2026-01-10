@@ -162,40 +162,8 @@ class GestureControlModule {
   }
 
   updateTransformation(world_group_position, mesh_position) {
-    if (this.isLeftPinching && this.isRightPinching) {
-      // Use the average of both left and right translation
-      let translationDeltaLeft = this.leftHandPosition.clone().sub(this.prevLeftHandPosition);
-      let translationDeltaRight = this.rightHandPosition.clone().sub(this.prevRightHandPosition);
-      let translationDelta = translationDeltaLeft.add(translationDeltaRight).multiplyScalar(0.5);
-      this.currentTranslation.add(translationDelta);
-    }
-
-    let handDistance = this.leftHandPosition.distanceTo(this.rightHandPosition);
-    if (this.isLeftPinching && this.isRightPinching && handDistance > 0.1) {
-      let prevDistance = this.prevLeftHandPosition.distanceTo(this.prevRightHandPosition);
-      let currentDistance = this.leftHandPosition.distanceTo(this.rightHandPosition);
-      let scaleDelta = currentDistance / prevDistance;
-      this.currentScale *= scaleDelta;
-      this.currentScale = Math.max(0.1, Math.min(this.currentScale, 2));
-
-      // Scaling the mesh down moves the grasp point toward the mesh center
-      // To compensate, translate the mesh toward the grasp point (if scaleDelta < 1) or away from the grasp point (if scaleDelta > 1)
-      let grasp_point = this.leftHandPosition.clone().add(this.rightHandPosition).multiplyScalar(0.5);
-      grasp_point.sub(world_group_position);
-      grasp_point.sub(mesh_position);
-      this.currentTranslation.add(grasp_point.clone().multiplyScalar(1.0 - scaleDelta));
-      this.currentTranslation.x = Math.max(-10.0, Math.min(this.currentTranslation.x, 10.0));
-      this.currentTranslation.y = Math.max(-10.0, Math.min(this.currentTranslation.y, 10.0));
-      this.currentTranslation.z = Math.max(-5.0, Math.min(this.currentTranslation.z, 5.0));
-
-      // Rotate only about the Y axis
-      let rotationDelta = this.normalizeAngle(this.getHandAngle(this.leftHandPosition, this.rightHandPosition) - this.getHandAngle(this.prevLeftHandPosition, this.prevRightHandPosition));
-      this.currentRotY += rotationDelta;
-
-      let rotation_motion = new Vector3(-grasp_point.z, 0, grasp_point.x);
-      rotation_motion.multiplyScalar(Math.max(Math.min(rotationDelta, 0.1), -0.1));
-      this.currentTranslation.add(rotation_motion);
-    }
+    // Two-hand pinch is disabled - we only use single-hand slide gesture for navigation
+    // Keep translation update for potential future use but skip scale/rotate
     this.prevLeftHandPosition.copy(this.leftHandPosition);
     this.prevRightHandPosition.copy(this.rightHandPosition);
   }

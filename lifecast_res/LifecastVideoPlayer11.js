@@ -47,7 +47,7 @@ import * as Icons from './Icons.js';
 
 const gesture_control = new GestureControlModule();
 
-let enable_debug_text = true; // Turn this on if you want to use debugLog() or setDebugText(). default: false
+let enable_debug_text = false; // Turn this on if you want to use debugLog() or setDebugText(). default: false
 let title_text_mesh, title_text_div;
 let artanim_text_mesh, artanim_text_div;
 let debug_text_mesh, debug_text_div;
@@ -127,16 +127,26 @@ let transition_start_timer;
 let enable_intro_animation;
 let loop;
 
-// Fade transition state
-let fade_state = 'visible'; // 'visible', 'fading_out', 'fading_in'
+// Crossfade transition state
+let fade_state = 'visible'; // 'visible', 'crossfading'
 let fade_start_time = 0;
 let fade_amount = 1.0; // 1.0 = visible, 0.0 = black
-let pending_media_load = null; // Store media to load after fade out
+let crossfade_amount = 0.0; // 0.0 = current, 1.0 = next
+let pending_media_index = null; // Store index to transition to
+const CROSSFADE_DURATION = 600; // Duration of crossfade in ms
+
+// Texture cache for preloading
+const textureCache = new Map(); // Map<url, {texture, loading, loaded}>
+const PRELOAD_COUNT = 3; // Number of images to preload in each direction
 
 // Slide gesture state for image navigation
 let slide_gesture_start_x = 0;
 let slide_gesture_active = false;
 let slide_progress = 0; // -1 to 1, negative = previous, positive = next
+
+// VR UI elements
+let vr_nav_hint_mesh, vr_nav_hint_div;
+let vr_quit_button_mesh, vr_quit_button_div;
 
 var ua = navigator.userAgent;
 var is_firefox = ua.indexOf("Firefox") != -1;
@@ -274,9 +284,21 @@ function setDebugText(message) {
   debug_text_div.textContent = message;
 }
 
+// Exit VR session
+function exitVRSession() {
+  if (renderer && renderer.xr && renderer.xr.getSession()) {
+    renderer.xr.getSession().end();
+    debugLog('[VR] Exit requested');
+  }
+}
+
 function handleGenericButtonPress() {
-  // TODO: Decide on a way to reset view that doesn't interfere with gesture controls
-  //resetVRToCenter();
+  // Check for exit VR: both B buttons pressed
+  if (vr_controller0 && vr_controller1 && vr_controller0.button_B && vr_controller1.button_B) {
+    exitVRSession();
+    return;
+  }
+
   debugLog('[Button] handleGenericButtonPress called');
 
   if (vr_controller1.main_trigger || vr_controller0.button_A || vr_controller1.button_A) {
@@ -357,48 +379,122 @@ function resetVRToCenter() {
   }
 }
 
-// Start fade out, then load new media, then fade in
-function startFadeTransition(new_media_index) {
-  if (fade_state !== 'visible') return; // Already transitioning
+// Preload a texture and store in cache
+function preloadTexture(url) {
+  if (textureCache.has(url)) return; // Already cached or loading
 
-  pending_media_load = new_media_index;
-  fade_state = 'fading_out';
-  fade_start_time = performance.now();
-  debugLog('[Fade] Starting fade out to image ' + new_media_index);
+  const entry = { texture: null, loading: true, loaded: false };
+  textureCache.set(url, entry);
+
+  const tex = new TextureLoader().load(
+    url,
+    function(loadedTex) {
+      entry.texture = loadedTex;
+      entry.loading = false;
+      entry.loaded = true;
+      // Apply texture settings
+      loadedTex.format = RGBAFormat;
+      loadedTex.type = UnsignedByteType;
+      loadedTex.minFilter = LinearFilter;
+      loadedTex.magFilter = LinearFilter;
+      loadedTex.generateMipmaps = false;
+      debugLog('[Preload] Loaded: ' + url.split('/').pop());
+    },
+    null,
+    function(error) {
+      entry.loading = false;
+      debugLog('[Preload] Failed: ' + url.split('/').pop());
+    }
+  );
 }
 
-// Update fade animation - called every frame
+// Preload nearby images (PRELOAD_COUNT in each direction)
+function preloadNearbyImages() {
+  if (!media_playlist || media_playlist.length === 0) return;
+
+  for (let i = 1; i <= PRELOAD_COUNT; i++) {
+    // Preload next images
+    const nextIdx = (media_index + i) % media_playlist.length;
+    preloadTexture(media_playlist[nextIdx][0]);
+
+    // Preload previous images
+    const prevIdx = (media_index - i + media_playlist.length) % media_playlist.length;
+    preloadTexture(media_playlist[prevIdx][0]);
+  }
+}
+
+// Get cached texture or null if not ready
+function getCachedTexture(url) {
+  const entry = textureCache.get(url);
+  if (entry && entry.loaded && entry.texture) {
+    return entry.texture;
+  }
+  return null;
+}
+
+// Start crossfade transition to new image
+function startCrossfadeTransition(new_media_index) {
+  if (fade_state !== 'visible') return; // Already transitioning
+  if (new_media_index === media_index) return; // Same image
+
+  const nextUrl = media_playlist[new_media_index][0];
+  const cachedTexture = getCachedTexture(nextUrl);
+
+  if (cachedTexture && media_mesh && media_mesh.uniforms) {
+    // Use cached texture for smooth crossfade
+    media_mesh.uniforms.uTextureNext.value = cachedTexture;
+    pending_media_index = new_media_index;
+    fade_state = 'crossfading';
+    fade_start_time = performance.now();
+    crossfade_amount = 0.0;
+    debugLog('[Crossfade] Starting to image ' + (new_media_index + 1));
+  } else {
+    // Texture not cached, load directly (fallback)
+    media_index = new_media_index;
+    loadMediaDirect(media_playlist[media_index]);
+    preloadNearbyImages();
+    debugLog('[Crossfade] Direct load (not cached): ' + (new_media_index + 1));
+  }
+}
+
+// Update crossfade animation - called every frame
 function updateFadeTransition() {
   if (fade_state === 'visible') return;
 
   const elapsed = performance.now() - fade_start_time;
-  const progress = Math.min(1.0, elapsed / FADE_DURATION);
+  const progress = Math.min(1.0, elapsed / CROSSFADE_DURATION);
 
-  if (fade_state === 'fading_out') {
-    fade_amount = 1.0 - progress;
-    if (progress >= 1.0) {
-      // Fade out complete, load new media
-      fade_amount = 0.0;
-      if (pending_media_load !== null) {
-        media_index = pending_media_load;
-        loadMediaDirect(media_playlist[media_index]);
-        pending_media_load = null;
-      }
-      // Start fade in
-      fade_state = 'fading_in';
-      fade_start_time = performance.now();
-      debugLog('[Fade] Fade out complete, starting fade in');
+  if (fade_state === 'crossfading') {
+    // Smooth easing for crossfade
+    crossfade_amount = progress * progress * (3 - 2 * progress); // smoothstep
+
+    if (media_mesh && media_mesh.uniforms) {
+      media_mesh.uniforms.uCrossfade.value = crossfade_amount;
     }
-  } else if (fade_state === 'fading_in') {
-    fade_amount = progress;
+
     if (progress >= 1.0) {
-      fade_amount = 1.0;
+      // Crossfade complete - swap textures
+      if (pending_media_index !== null && media_mesh && media_mesh.uniforms) {
+        media_index = pending_media_index;
+        // Set current texture to what was the "next" texture
+        media_mesh.uniforms.uTexture.value = media_mesh.uniforms.uTextureNext.value;
+        media_mesh.uniforms.uCrossfade.value = 0.0;
+        pending_media_index = null;
+
+        // Update title
+        const url = media_playlist[media_index][0];
+        title_text_div.textContent = url.split('/').pop().split('.')[0];
+
+        // Preload nearby images
+        preloadNearbyImages();
+      }
+      crossfade_amount = 0.0;
       fade_state = 'visible';
-      debugLog('[Fade] Fade in complete');
+      debugLog('[Crossfade] Complete, now at image ' + (media_index + 1));
     }
   }
 
-  // Apply fade to shader
+  // Apply overall fade (for slide gesture preview)
   if (media_mesh && media_mesh.uniforms && media_mesh.uniforms.uFadeAmount) {
     media_mesh.uniforms.uFadeAmount.value = fade_amount;
   }
@@ -406,12 +502,12 @@ function updateFadeTransition() {
 
 function previousMedia () {
   const new_index = (media_index - 1 + media_playlist.length) % media_playlist.length;
-  startFadeTransition(new_index);
+  startCrossfadeTransition(new_index);
 }
 
 function nextMedia () {
   const new_index = (media_index + 1) % media_playlist.length;
-  startFadeTransition(new_index);
+  startCrossfadeTransition(new_index);
 }
 
 // Direct load without fade (used internally after fade out)
@@ -419,42 +515,55 @@ function loadMediaDirect(_media_urls) {
   loadTexture(_media_urls, loop);
 }
 
-// Update slide gesture for image navigation
+// Update slide gesture for image navigation with crossfade preview
 function updateSlideGesture() {
   if (!handsAvailable() && !vr_session_active) return;
+  if (fade_state !== 'visible') return; // Don't interfere with active transition
 
   // Check for single-hand pinch (slide gesture)
   if (gesture_control.isSingleHandPinching()) {
     if (!gesture_control.slideActive) {
       gesture_control.startSlideGesture();
       debugLog('[Slide] Gesture started');
+
+      // Prepare preview texture based on initial slide direction hint
+      // We'll update it as user slides
     }
 
-    // Get current progress and apply partial fade
+    // Get current progress
     const progress = gesture_control.updateSlideGesture();
     slide_progress = progress;
 
-    // Apply partial fade based on slide progress (only if not already transitioning)
-    if (fade_state === 'visible' && media_mesh && media_mesh.uniforms && media_mesh.uniforms.uFadeAmount) {
-      // Fade to black as user slides further
-      const fadeFromSlide = 1.0 - Math.abs(progress) * 0.8;
-      media_mesh.uniforms.uFadeAmount.value = fadeFromSlide;
+    // Show crossfade preview during slide
+    if (media_mesh && media_mesh.uniforms && Math.abs(progress) > 0.05) {
+      const targetIndex = progress > 0
+        ? (media_index + 1) % media_playlist.length
+        : (media_index - 1 + media_playlist.length) % media_playlist.length;
+
+      const targetUrl = media_playlist[targetIndex][0];
+      const cachedTexture = getCachedTexture(targetUrl);
+
+      if (cachedTexture) {
+        // Show preview crossfade
+        media_mesh.uniforms.uTextureNext.value = cachedTexture;
+        media_mesh.uniforms.uCrossfade.value = Math.abs(progress) * 0.7; // Max 70% during preview
+      }
     }
   } else if (gesture_control.slideActive) {
     // Pinch released - check if we should navigate
     const result = gesture_control.endSlideGesture();
     debugLog('[Slide] Gesture ended: ' + result.direction + ', navigate=' + result.shouldNavigate);
 
-    if (result.shouldNavigate && fade_state === 'visible') {
+    if (result.shouldNavigate) {
       if (result.direction === 'next') {
         nextMedia();
       } else {
         previousMedia();
       }
     } else {
-      // Reset fade if not navigating
-      if (media_mesh && media_mesh.uniforms && media_mesh.uniforms.uFadeAmount) {
-        media_mesh.uniforms.uFadeAmount.value = 1.0;
+      // Reset crossfade preview if not navigating
+      if (media_mesh && media_mesh.uniforms) {
+        media_mesh.uniforms.uCrossfade.value = 0.0;
       }
     }
     slide_progress = 0;
@@ -1031,12 +1140,13 @@ export function init({
   }
 
   title_text_div = document.createElement("title_text_div");
-  title_text_div.innerHTML = "";
+  title_text_div.textContent = "";
   artanim_text_div = document.createElement("artanim_text_div");
   artanim_text_div.textContent = "panrama.net";
-  // artanim_text_div.innerHTML = "<img src='logo.png' alt='Artanim' style='width: 1000px; height: 200px;'></img>";  // style='width: 100px; height: 100px;'
-  // artanim_text_div.innerHTML = "<a href='https://artanim.ch' target='_blank'>Artanim - 2025</a>";  // TODO: Artanim logo img
   loadTexture(_media_urls, loop);
+
+  // Start preloading nearby images after initial load
+  setTimeout(preloadNearbyImages, 500);
 
   makeNonVrControls();
 
@@ -1174,6 +1284,56 @@ export function init({
   artanim_text_mesh.position.y = -1.2;  // -0.5
   artanim_text_mesh.position.z = -1.5;  // -1
   artanim_text_mesh.scale.setScalar(1);  // 0.5
+
+  // VR Navigation hints - discrete at bottom of view
+  vr_nav_hint_div = document.createElement("div");
+  vr_nav_hint_div.textContent = "\u{1F448} Pinch+Slide | A/B \u{1F449}"; // 👈 Pinch+Slide | A/B 👉
+  vr_nav_hint_div.style.width = '350px';
+  vr_nav_hint_div.style.height = '40px';
+  vr_nav_hint_div.style.fontFamily = 'Arial, sans-serif';
+  vr_nav_hint_div.style.fontSize = '18px';
+  vr_nav_hint_div.style.textAlign = 'center';
+  vr_nav_hint_div.style.color = 'rgba(255, 255, 255, 0.4)';
+  vr_nav_hint_div.style.backgroundColor = 'rgba(0, 0, 0, 0.2)';
+  vr_nav_hint_div.style.borderRadius = '20px';
+  vr_nav_hint_div.style.padding = '8px 15px';
+  vr_nav_hint_div.style.position = 'absolute';
+  vr_nav_hint_div.style.left = '-1000px';
+  vr_nav_hint_div.style.top = '-1000px';
+  document.body.appendChild(vr_nav_hint_div);
+
+  vr_nav_hint_mesh = new HTMLMesh(vr_nav_hint_div);
+  vr_nav_hint_mesh.position.x = 0;
+  vr_nav_hint_mesh.position.y = -0.65;  // Bottom of view
+  vr_nav_hint_mesh.position.z = -1.0;
+  vr_nav_hint_mesh.scale.setScalar(0.4);
+  vr_nav_hint_mesh.visible = false; // Only visible in VR
+  interface_group.add(vr_nav_hint_mesh);
+
+  // VR Quit hint
+  vr_quit_button_div = document.createElement("div");
+  vr_quit_button_div.textContent = "B+B Exit"; // Both B buttons to exit
+  vr_quit_button_div.style.width = '120px';
+  vr_quit_button_div.style.height = '30px';
+  vr_quit_button_div.style.fontFamily = 'Arial, sans-serif';
+  vr_quit_button_div.style.fontSize = '14px';
+  vr_quit_button_div.style.textAlign = 'center';
+  vr_quit_button_div.style.color = 'rgba(255, 255, 255, 0.3)';
+  vr_quit_button_div.style.backgroundColor = 'rgba(0, 0, 0, 0.2)';
+  vr_quit_button_div.style.borderRadius = '15px';
+  vr_quit_button_div.style.padding = '5px 10px';
+  vr_quit_button_div.style.position = 'absolute';
+  vr_quit_button_div.style.left = '-1000px';
+  vr_quit_button_div.style.top = '-1000px';
+  document.body.appendChild(vr_quit_button_div);
+
+  vr_quit_button_mesh = new HTMLMesh(vr_quit_button_div);
+  vr_quit_button_mesh.position.x = 0.5;
+  vr_quit_button_mesh.position.y = -0.65;  // Bottom right
+  vr_quit_button_mesh.position.z = -1.0;
+  vr_quit_button_mesh.scale.setScalar(0.35);
+  vr_quit_button_mesh.visible = false; // Only visible in VR
+  interface_group.add(vr_quit_button_mesh);
   interface_group.add(artanim_text_mesh);
 
   renderer = new WebGLRenderer({
@@ -1387,6 +1547,10 @@ export function init({
     // When we enter VR, toggle on the VR-only 3d buttons.
     vr_session_active = true;
 
+    // Show VR UI elements
+    if (vr_nav_hint_mesh) vr_nav_hint_mesh.visible = true;
+    if (vr_quit_button_mesh) vr_quit_button_mesh.visible = true;
+
     // Create an event handler for the Oculus reset to center button. We have to wait to
     // construct the handler here to get a non-null XReferenceSpace.
     xr_ref_space = renderer.xr.getReferenceSpace();
@@ -1399,6 +1563,8 @@ export function init({
     if (transition_start_timer) {
       startAnimatedTransitionEffect();
     }
+
+    debugLog('[VR] Session started');
   });
 
   renderer.xr.addEventListener('sessionend', function(event) {
@@ -1406,13 +1572,17 @@ export function init({
     // handlers if the user goes back and forth between VR and non.
     if(xr_ref_space.removeEventListener) xr_ref_space.removeEventListener("reset", reset_event_handler);
 
-    // When we enter VR, toggle on the VR-only 3d buttons.
+    // When we exit VR, hide VR-only elements
     vr_session_active = false;
     vrbutton3d.visible = false;
+    if (vr_nav_hint_mesh) vr_nav_hint_mesh.visible = false;
+    if (vr_quit_button_mesh) vr_quit_button_mesh.visible = false;
 
     // When we exit VR mode on Oculus Browser it messes up the camera, so lets reset it.
     world_group.position.set(0, 0, 0);
     gesture_control.reset();
+
+    debugLog('[VR] Session ended');
   });
 
   // Remove any redundant loading indicator (from LifecastVideoPlayerPreloader)

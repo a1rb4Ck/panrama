@@ -35,13 +35,18 @@ precision highp float;
 
 #include <common>
 uniform sampler2D uTexture;
+uniform sampler2D uTextureNext;
 uniform float uFadeAmount;
+uniform float uCrossfade;
 varying vec2 vUv;
 
 void main() {
   vec2 texture_uv = vec2(vUv.s, vUv.t);
-  vec4 color = texture2D(uTexture, texture_uv);
-  // Apply fade to black (uFadeAmount: 1.0 = full visible, 0.0 = black)
+  vec4 colorCurrent = texture2D(uTexture, texture_uv);
+  vec4 colorNext = texture2D(uTextureNext, texture_uv);
+  // Crossfade between current and next texture
+  vec4 color = mix(colorCurrent, colorNext, uCrossfade);
+  // Apply overall fade (uFadeAmount: 1.0 = full visible, 0.0 = black)
   gl_FragColor = vec4(color.rgb * uFadeAmount, color.a);
 }
 `;

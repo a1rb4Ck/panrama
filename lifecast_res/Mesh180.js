@@ -18,8 +18,10 @@ export class Mesh180 extends Object3D {
 
         this.uniforms = {
             uTexture: { value: texture },
+            uTextureNext: { value: texture },  // For crossfade transitions
             uEffectRadius: { value: 0 },
             uFadeAmount: { value: 1.0 },  // 1.0 = full visible, 0.0 = black
+            uCrossfade: { value: 0.0 },   // 0.0 = current, 1.0 = next
         };
 
         // const fragmentShader = `
