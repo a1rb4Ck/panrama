@@ -36,7 +36,7 @@ import {
   Vector3, MeshPhongMaterial, DoubleSide, HemisphereLight, DirectionalLight,
   TextureLoader, RGBAFormat, UnsignedByteType, LinearFilter, PerspectiveCamera,
   Scene, Color, Group, PlaneGeometry, MeshBasicMaterial, Mesh, WebGLRenderer,
-  BoxGeometry, Raycaster, Vector2, SphereGeometry, CylinderGeometry
+  BoxGeometry, SphereGeometry
 } from './three178.module.min.js';
 import {OrbitControls} from "./OrbitControls.js";
 import {HTMLMesh} from './HTMLMesh.js';
@@ -161,20 +161,14 @@ let controller_slide_hand = null; // 'left' or 'right'
 let joystick_cooldown = 0;
 const JOYSTICK_COOLDOWN_FRAMES = 30; // Prevent rapid navigation
 
-// VR UI elements
-let vr_nav_hint_mesh, vr_nav_hint_div;
-let vr_quit_button_mesh, vr_quit_button_div;
+// VR UI elements - removed: nav hints and quit button (cleaner UI)
 
 // VR Progress Bar (replaces vrbutton3d for modern UI)
 let vr_progress_bar_group;
 let vr_progress_bar_bg, vr_progress_bar_fill, vr_progress_indicator;
 
-// VR Exit Button (clickable)
-let vr_exit_button_group, vr_exit_button_mesh;
-let vr_raycaster;
-let exit_button_hovered = false;
-let exit_button_cooldown = 0;
-const EXIT_BUTTON_COOLDOWN_FRAMES = 60; // 1 second cooldown
+// VR Image Counter text
+let vr_image_counter_mesh, vr_image_counter_div;
 
 var ua = navigator.userAgent;
 var is_firefox = ua.indexOf("Firefox") != -1;
@@ -799,8 +793,8 @@ function render() {
   // Update VR progress bar
   updateVRProgressBar();
 
-  // Update VR exit button interaction
-  updateVRExitButton();
+  // Update image counter
+  updateImageCounter();
 
   // Update debug display with current state
   updateDebugDisplay();
@@ -935,35 +929,38 @@ function updateGamepad(vr_controller, hand) {
   updateControllerSlide(vr_controller, hand, prev_main_trigger);
 }
 
-// Handle trigger + slide gesture for controller navigation
+// Handle trigger + slide gesture for controller navigation (works like hand pinch+slide)
 function updateControllerSlide(controller, hand, prev_trigger) {
   if (!controller) return;
+  if (fade_state !== 'visible' && !slide_animating) return; // Don't start during transition
+  if (gesture_control && gesture_control.slideActive) return; // Hand tracking has priority
 
   const trigger_pressed = controller.main_trigger;
   const trigger_just_pressed = trigger_pressed && !prev_trigger;
   const trigger_just_released = !trigger_pressed && prev_trigger;
 
-  // Start slide on trigger press
-  if (trigger_just_pressed && !controller_slide_active && !slide_animating) {
+  // Start slide on trigger press (like pinch start)
+  if (trigger_just_pressed && !controller_slide_active && !slide_animating && fade_state === 'visible') {
     controller_slide_active = true;
     controller_slide_start_x = controller.position.x;
     controller_slide_hand = hand;
-    debugLog('[Controller] Slide started: ' + hand);
+    slide_progress = 0;
+    debugLog('[Controller] Trigger slide started: ' + hand);
   }
 
-  // Update slide progress while trigger held
+  // Update slide progress while trigger held (like pinch held)
   if (controller_slide_active && controller_slide_hand === hand && trigger_pressed) {
     const deltaX = controller.position.x - controller_slide_start_x;
-    const SLIDE_THRESHOLD = 0.15; // 15cm for full slide
+    const SLIDE_THRESHOLD = 0.20; // 20cm for full slide (easier than hand tracking)
     slide_progress = Math.max(-1, Math.min(1, deltaX / SLIDE_THRESHOLD));
 
     // Show crossfade preview
     updateSlidePreview();
   }
 
-  // End slide on trigger release
+  // End slide on trigger release (like pinch end)
   if (controller_slide_active && controller_slide_hand === hand && trigger_just_released) {
-    debugLog('[Controller] Slide ended: progress=' + slide_progress.toFixed(2));
+    debugLog('[Controller] Trigger slide ended: progress=' + slide_progress.toFixed(2));
     finalizeSlideGesture();
     controller_slide_active = false;
     controller_slide_hand = null;
@@ -1155,141 +1152,12 @@ function updateVRProgressBar() {
   }
 }
 
-// Create VR exit button (clickable)
-function createVRExitButton() {
-  vr_exit_button_group = new Group();
-
-  // Button background
-  const bgGeometry = new CylinderGeometry(0.025, 0.025, 0.005, 32);
-  const bgMaterial = new MeshBasicMaterial({
-    color: 0x333333,
-    transparent: true,
-    opacity: 0.7
-  });
-  const bgMesh = new Mesh(bgGeometry, bgMaterial);
-  bgMesh.rotation.x = Math.PI / 2;
-  vr_exit_button_group.add(bgMesh);
-
-  // X icon (two crossed lines)
-  const lineGeometry = new BoxGeometry(0.02, 0.003, 0.003);
-  const lineMaterial = new MeshBasicMaterial({ color: 0xff4444 });
-
-  const line1 = new Mesh(lineGeometry, lineMaterial);
-  line1.rotation.z = Math.PI / 4;
-  line1.position.z = 0.003;
-  vr_exit_button_group.add(line1);
-
-  const line2 = new Mesh(lineGeometry, lineMaterial);
-  line2.rotation.z = -Math.PI / 4;
-  line2.position.z = 0.003;
-  vr_exit_button_group.add(line2);
-
-  // Store main mesh for raycasting
-  vr_exit_button_mesh = bgMesh;
-  vr_exit_button_mesh.userData.isExitButton = true;
-
-  // Position next to progress bar
-  vr_exit_button_group.position.set(0.15, -0.5, -0.5);
-  vr_exit_button_group.rotation.set(-0.5, 0, 0);
-  vr_exit_button_group.visible = false; // Hidden in non-VR
-
-  // Create raycaster for interaction
-  vr_raycaster = new Raycaster();
-
-  return vr_exit_button_group;
-}
-
-// Update VR exit button (check for hover/click)
-function updateVRExitButton() {
-  if (!vr_exit_button_group || !vr_session_active || !vr_raycaster) return;
-
-  // Handle cooldown
-  if (exit_button_cooldown > 0) {
-    exit_button_cooldown--;
-    return;
-  }
-
-  let isHovering = false;
-  let isClicking = false;
-
-  // Check controller pointing
-  const controllers = [vr_controller0, vr_controller1];
-  for (const controller of controllers) {
-    if (!controller) continue;
-
-    // Get controller direction
-    const direction = new Vector3(0, 0, -1);
-    direction.applyQuaternion(controller.quaternion);
-
-    vr_raycaster.set(controller.position, direction);
-    const intersects = vr_raycaster.intersectObject(vr_exit_button_mesh);
-
-    if (intersects.length > 0) {
-      isHovering = true;
-      // Check if trigger pressed
-      if (controller.main_trigger) {
-        isClicking = true;
-      }
-    }
-  }
-
-  // Check hand pointing (index finger)
-  if (handsAvailable()) {
-    const hands = [hand0, hand1];
-    for (const hand of hands) {
-      if (!hand || !hand.joints) continue;
-
-      const indexTip = hand.joints['index-finger-tip'];
-      const indexMcp = hand.joints['index-finger-metacarpal'];
-      if (!indexTip || !indexMcp) continue;
-
-      // Direction from MCP to tip
-      const direction = new Vector3().subVectors(indexTip.position, indexMcp.position).normalize();
-      vr_raycaster.set(indexTip.position, direction);
-
-      const intersects = vr_raycaster.intersectObject(vr_exit_button_mesh);
-      if (intersects.length > 0) {
-        isHovering = true;
-
-        // Check for pinch to click
-        const thumbTip = hand.joints['thumb-tip'];
-        if (thumbTip) {
-          const pinchDist = thumbTip.position.distanceTo(indexTip.position);
-          if (pinchDist < 0.025) {
-            isClicking = true;
-          }
-        }
-      }
-    }
-  }
-
-  // Visual feedback
-  const bgMesh = vr_exit_button_mesh;
-  if (isHovering) {
-    bgMesh.material.color.setHex(0x555555);
-    bgMesh.material.opacity = 0.9;
-    if (!exit_button_hovered) {
-      exit_button_hovered = true;
-      // Haptic feedback on hover
-      for (const controller of controllers) {
-        if (controller) triggerHaptic(controller, 0.1, 20);
-      }
-    }
-  } else {
-    bgMesh.material.color.setHex(0x333333);
-    bgMesh.material.opacity = 0.7;
-    exit_button_hovered = false;
-  }
-
-  // Handle click (only on button release to avoid accidental triggers)
-  if (isClicking && exit_button_hovered) {
-    debugLog('[Exit] Button clicked');
-    exit_button_cooldown = EXIT_BUTTON_COOLDOWN_FRAMES;
-    // Haptic feedback
-    for (const controller of controllers) {
-      if (controller) triggerHaptic(controller, 0.8, 100);
-    }
-    exitVRSession();
+// Update image counter text
+function updateImageCounter() {
+  if (!vr_image_counter_div || !vr_session_active) return;
+  const text = (media_index + 1) + ' / ' + media_playlist.length;
+  if (vr_image_counter_div.textContent !== text) {
+    vr_image_counter_div.textContent = text;
   }
 }
 
@@ -1547,24 +1415,20 @@ export function init({
   }
   world_group.add(media_mesh)
 
-  // Make the point sprite for VR buttons (kept for buffering indicator)
+  // Make the point sprite for VR buttons (used for non-VR buffering indicator only)
   const vrbutton_geometry = new PlaneGeometry(0.1, 0.1);
   vrbutton_texture_play = new TextureLoader().load(Icons.play_button);
   vrbutton_texture_buffering = new TextureLoader().load(Icons.spinner);
   vrbutton_material = new MeshBasicMaterial({map: vrbutton_texture_buffering, transparent: true});
   vrbutton3d = new Mesh(vrbutton_geometry, vrbutton_material);
-  vrbutton3d.visible = false;
-  vrbutton3d.position.set(0, -0.3, -0.5); // Moved up to not overlap with progress bar
+  vrbutton3d.visible = false; // Always hidden - not used in VR anymore
+  vrbutton3d.position.set(0, -0.3, -0.5);
   vrbutton3d.renderOrder = 100;
   media_mesh.add(vrbutton3d);
 
-  // Create modern VR progress bar (replaces vrbutton3d for navigation feedback)
+  // Create modern VR progress bar
   const progressBar = createVRProgressBar();
   interface_group.add(progressBar);
-
-  // Create clickable VR exit button
-  const exitButton = createVRExitButton();
-  interface_group.add(exitButton);
 
   if (enable_intro_animation) {
     media_mesh.uniforms.uEffectRadius.value = 0.0;
@@ -1656,32 +1520,33 @@ export function init({
   artanim_text_mesh.position.z = -1.5;  // -1
   artanim_text_mesh.scale.setScalar(1);  // 0.5
 
-  // VR Navigation hints - discrete at bottom of view
-  vr_nav_hint_div = document.createElement("div");
-  vr_nav_hint_div.textContent = "\u{1F448} B | Trigger+Slide | Joystick | A \u{1F449}"; // 👈 B | Trigger+Slide | Joystick | A 👉
-  vr_nav_hint_div.style.width = '400px';
-  vr_nav_hint_div.style.height = '40px';
-  vr_nav_hint_div.style.fontFamily = 'Arial, sans-serif';
-  vr_nav_hint_div.style.fontSize = '16px';
-  vr_nav_hint_div.style.textAlign = 'center';
-  vr_nav_hint_div.style.color = 'rgba(255, 255, 255, 0.4)';
-  vr_nav_hint_div.style.backgroundColor = 'rgba(0, 0, 0, 0.2)';
-  vr_nav_hint_div.style.borderRadius = '20px';
-  vr_nav_hint_div.style.padding = '8px 15px';
-  vr_nav_hint_div.style.position = 'absolute';
-  vr_nav_hint_div.style.left = '-1000px';
-  vr_nav_hint_div.style.top = '-1000px';
-  document.body.appendChild(vr_nav_hint_div);
+  // VR Image counter - small text next to progress bar showing current/total
+  vr_image_counter_div = document.createElement("div");
+  vr_image_counter_div.textContent = "1 / " + (media_playlist ? media_playlist.length : 1);
+  vr_image_counter_div.style.width = '100px';
+  vr_image_counter_div.style.height = '30px';
+  vr_image_counter_div.style.fontFamily = 'Arial, sans-serif';
+  vr_image_counter_div.style.fontSize = '16px';
+  vr_image_counter_div.style.textAlign = 'center';
+  vr_image_counter_div.style.color = 'rgba(255, 255, 255, 0.6)';
+  vr_image_counter_div.style.backgroundColor = 'rgba(0, 0, 0, 0.3)';
+  vr_image_counter_div.style.borderRadius = '15px';
+  vr_image_counter_div.style.padding = '5px 10px';
+  vr_image_counter_div.style.position = 'absolute';
+  vr_image_counter_div.style.left = '-1000px';
+  vr_image_counter_div.style.top = '-1000px';
+  document.body.appendChild(vr_image_counter_div);
 
-  vr_nav_hint_mesh = new HTMLMesh(vr_nav_hint_div);
-  vr_nav_hint_mesh.position.x = 0;
-  vr_nav_hint_mesh.position.y = -0.65;  // Bottom of view
-  vr_nav_hint_mesh.position.z = -1.0;
-  vr_nav_hint_mesh.scale.setScalar(0.4);
-  vr_nav_hint_mesh.visible = false; // Only visible in VR
-  interface_group.add(vr_nav_hint_mesh);
+  vr_image_counter_mesh = new HTMLMesh(vr_image_counter_div);
+  // Position next to the progress bar (which is at 0, -0.5, -0.5)
+  vr_image_counter_mesh.position.x = 0.18;  // Right of progress bar
+  vr_image_counter_mesh.position.y = -0.5;
+  vr_image_counter_mesh.position.z = -0.5;
+  vr_image_counter_mesh.rotation.set(-0.5, 0, 0);  // Same rotation as progress bar
+  vr_image_counter_mesh.scale.setScalar(0.3);
+  vr_image_counter_mesh.visible = false; // Only visible in VR
+  interface_group.add(vr_image_counter_mesh);
 
-  // Note: Old vr_quit_button_mesh removed - replaced by clickable 3D exit button
   interface_group.add(artanim_text_mesh);
 
   renderer = new WebGLRenderer({
@@ -1892,19 +1757,17 @@ export function init({
 
   let xr_ref_space;
   renderer.xr.addEventListener('sessionstart', function(event) {
-    // When we enter VR, toggle on the VR-only 3d buttons.
+    // When we enter VR, toggle on the VR-only UI elements
     vr_session_active = true;
 
     // Show VR UI elements
-    if (vr_nav_hint_mesh) vr_nav_hint_mesh.visible = true;
     if (vr_progress_bar_group) vr_progress_bar_group.visible = true;
-    if (vr_exit_button_group) vr_exit_button_group.visible = true;
+    if (vr_image_counter_mesh) vr_image_counter_mesh.visible = true;
 
     // Reset slide state
     slide_progress = 0;
     slide_animating = false;
     controller_slide_active = false;
-    exit_button_hovered = false;
 
     // Create an event handler for the Oculus reset to center button. We have to wait to
     // construct the handler here to get a non-null XReferenceSpace.
@@ -1930,9 +1793,8 @@ export function init({
     // When we exit VR, hide VR-only elements
     vr_session_active = false;
     vrbutton3d.visible = false;
-    if (vr_nav_hint_mesh) vr_nav_hint_mesh.visible = false;
     if (vr_progress_bar_group) vr_progress_bar_group.visible = false;
-    if (vr_exit_button_group) vr_exit_button_group.visible = false;
+    if (vr_image_counter_mesh) vr_image_counter_mesh.visible = false;
 
     // Reset slide state
     slide_progress = 0;
