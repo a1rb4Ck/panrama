@@ -19,6 +19,7 @@ export class Vr180Mesh extends Object3D {
         this.uniforms = {
             uTexture: { value: texture },
             uEffectRadius: { value: 0 },
+            uFadeAmount: { value: 1.0 },  // 1.0 = full visible, 0.0 = black
         };
 
         // const fragmentShader = `

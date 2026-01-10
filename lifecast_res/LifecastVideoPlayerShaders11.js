@@ -35,10 +35,13 @@ precision highp float;
 
 #include <common>
 uniform sampler2D uTexture;
+uniform float uFadeAmount;
 varying vec2 vUv;
 
 void main() {
   vec2 texture_uv = vec2(vUv.s, vUv.t);
-  gl_FragColor = texture2D(uTexture, texture_uv);
+  vec4 color = texture2D(uTexture, texture_uv);
+  // Apply fade to black (uFadeAmount: 1.0 = full visible, 0.0 = black)
+  gl_FragColor = vec4(color.rgb * uFadeAmount, color.a);
 }
 `;

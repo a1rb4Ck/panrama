@@ -47,7 +47,7 @@ import * as Icons from './Icons.js';
 
 const gesture_control = new GestureControlModule();
 
-let enable_debug_text = false; // Turn this on if you want to use debugLog() or setDebugText(). default: false
+let enable_debug_text = true; // Turn this on if you want to use debugLog() or setDebugText(). default: false
 let title_text_mesh, title_text_div;
 let artanim_text_mesh, artanim_text_div;
 let debug_text_mesh, debug_text_div;
@@ -122,9 +122,21 @@ let AUTO_CAM_MOVE_TIME = 5000;
 
 const BUFFERING_TIMEOUT = 500;
 const TRANSITION_ANIM_DURATION = 8000;
+const FADE_DURATION = 400; // Duration of fade to/from black in ms
 let transition_start_timer;
 let enable_intro_animation;
 let loop;
+
+// Fade transition state
+let fade_state = 'visible'; // 'visible', 'fading_out', 'fading_in'
+let fade_start_time = 0;
+let fade_amount = 1.0; // 1.0 = visible, 0.0 = black
+let pending_media_load = null; // Store media to load after fade out
+
+// Slide gesture state for image navigation
+let slide_gesture_start_x = 0;
+let slide_gesture_active = false;
+let slide_progress = 0; // -1 to 1, negative = previous, positive = next
 
 var ua = navigator.userAgent;
 var is_firefox = ua.indexOf("Firefox") != -1;
@@ -227,24 +239,46 @@ function makeNonVrControls() {
 }
 
 function debugLog(message) {
+  console.log('[Panrama]', message); // Also log to browser console
   ++debug_msg_count;
-  if (debug_msg_count > 30) {
-    //return; // HACK: stop adding new messages once we reach a limit
-    debug_log = "";
-    debug_msg_count = 0;
+  if (debug_msg_count > 20) {
+    // Keep last 20 messages, trim old ones
+    const lines = debug_log.split('\n');
+    debug_log = lines.slice(-15).join('\n');
+    debug_msg_count = 15;
   }
-  debug_log += message + "<br>";
-  setDebugText(debug_log);
+  const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
+  debug_log += timestamp + ' ' + message + '\n';
+  updateDebugDisplay();
+}
+
+function updateDebugDisplay() {
+  if (!enable_debug_text || !debug_text_div) return;
+
+  // Build status header
+  const imgInfo = 'Image: ' + (media_index + 1) + '/' + media_playlist.length;
+  const fadeInfo = 'Fade: ' + fade_state + ' (' + fade_amount.toFixed(2) + ')';
+  const slideInfo = 'Slide: ' + slide_progress.toFixed(2);
+  const vrInfo = 'VR: ' + (vr_session_active ? 'Active' : 'Inactive');
+
+  const header = '=== PANRAMA VR DEBUG ===\n' +
+                 imgInfo + ' | ' + fadeInfo + '\n' +
+                 slideInfo + ' | ' + vrInfo + '\n' +
+                 '========================\n';
+
+  debug_text_div.textContent = header + debug_log;
 }
 
 function setDebugText(message) {
   if (!enable_debug_text) return;
-  debug_text_div.innerHTML = message;
+  debug_text_div.textContent = message;
 }
 
 function handleGenericButtonPress() {
   // TODO: Decide on a way to reset view that doesn't interfere with gesture controls
   //resetVRToCenter();
+  debugLog('[Button] handleGenericButtonPress called');
+
   if (vr_controller1.main_trigger || vr_controller0.button_A || vr_controller1.button_A) {
     if (vr_controller1.main_trigger || vr_controller1.button_A) {
       // https://stackoverflow.com/questions/62476426/webxr-controllers-for-button-pressing-in-three-js
@@ -262,6 +296,7 @@ function handleGenericButtonPress() {
         vr_controller0.gamepad.hapticActuators[0].pulse(0.75, 100);
       }
     }
+    debugLog('[Button] Next image triggered');
     nextMedia(); // Next image
   }
   else if (vr_controller0.main_trigger || vr_controller0.button_B || vr_controller1.button_B || vr_controller0.secondary_trigger || vr_controller1.secondary_trigger) {
@@ -280,6 +315,7 @@ function handleGenericButtonPress() {
         vr_controller1.gamepad.hapticActuators[0].pulse(0.75, 100);
       }
     }
+    debugLog('[Button] Previous image triggered');
     previousMedia();  // Previous image
   }
 }
@@ -321,14 +357,122 @@ function resetVRToCenter() {
   }
 }
 
+// Start fade out, then load new media, then fade in
+function startFadeTransition(new_media_index) {
+  if (fade_state !== 'visible') return; // Already transitioning
+
+  pending_media_load = new_media_index;
+  fade_state = 'fading_out';
+  fade_start_time = performance.now();
+  debugLog('[Fade] Starting fade out to image ' + new_media_index);
+}
+
+// Update fade animation - called every frame
+function updateFadeTransition() {
+  if (fade_state === 'visible') return;
+
+  const elapsed = performance.now() - fade_start_time;
+  const progress = Math.min(1.0, elapsed / FADE_DURATION);
+
+  if (fade_state === 'fading_out') {
+    fade_amount = 1.0 - progress;
+    if (progress >= 1.0) {
+      // Fade out complete, load new media
+      fade_amount = 0.0;
+      if (pending_media_load !== null) {
+        media_index = pending_media_load;
+        loadMediaDirect(media_playlist[media_index]);
+        pending_media_load = null;
+      }
+      // Start fade in
+      fade_state = 'fading_in';
+      fade_start_time = performance.now();
+      debugLog('[Fade] Fade out complete, starting fade in');
+    }
+  } else if (fade_state === 'fading_in') {
+    fade_amount = progress;
+    if (progress >= 1.0) {
+      fade_amount = 1.0;
+      fade_state = 'visible';
+      debugLog('[Fade] Fade in complete');
+    }
+  }
+
+  // Apply fade to shader
+  if (media_mesh && media_mesh.uniforms && media_mesh.uniforms.uFadeAmount) {
+    media_mesh.uniforms.uFadeAmount.value = fade_amount;
+  }
+}
+
 function previousMedia () {
-  media_index = (media_index - 1 + media_playlist.length) % media_playlist.length;
-  loadMedia(media_playlist[media_index]);
+  const new_index = (media_index - 1 + media_playlist.length) % media_playlist.length;
+  startFadeTransition(new_index);
 }
 
 function nextMedia () {
-  media_index = (media_index + 1) % media_playlist.length;
-  loadMedia(media_playlist[media_index]);
+  const new_index = (media_index + 1) % media_playlist.length;
+  startFadeTransition(new_index);
+}
+
+// Direct load without fade (used internally after fade out)
+function loadMediaDirect(_media_urls) {
+  loadTexture(_media_urls, loop);
+}
+
+// Update slide gesture for image navigation
+function updateSlideGesture() {
+  if (!handsAvailable() && !vr_session_active) return;
+
+  // Check for single-hand pinch (slide gesture)
+  if (gesture_control.isSingleHandPinching()) {
+    if (!gesture_control.slideActive) {
+      gesture_control.startSlideGesture();
+      debugLog('[Slide] Gesture started');
+    }
+
+    // Get current progress and apply partial fade
+    const progress = gesture_control.updateSlideGesture();
+    slide_progress = progress;
+
+    // Apply partial fade based on slide progress (only if not already transitioning)
+    if (fade_state === 'visible' && media_mesh && media_mesh.uniforms && media_mesh.uniforms.uFadeAmount) {
+      // Fade to black as user slides further
+      const fadeFromSlide = 1.0 - Math.abs(progress) * 0.8;
+      media_mesh.uniforms.uFadeAmount.value = fadeFromSlide;
+    }
+  } else if (gesture_control.slideActive) {
+    // Pinch released - check if we should navigate
+    const result = gesture_control.endSlideGesture();
+    debugLog('[Slide] Gesture ended: ' + result.direction + ', navigate=' + result.shouldNavigate);
+
+    if (result.shouldNavigate && fade_state === 'visible') {
+      if (result.direction === 'next') {
+        nextMedia();
+      } else {
+        previousMedia();
+      }
+    } else {
+      // Reset fade if not navigating
+      if (media_mesh && media_mesh.uniforms && media_mesh.uniforms.uFadeAmount) {
+        media_mesh.uniforms.uFadeAmount.value = 1.0;
+      }
+    }
+    slide_progress = 0;
+  }
+}
+
+// Detect pinch from hand tracking
+function detectPinch(hand, isLeft) {
+  if (!hand || !hand.joints) return false;
+
+  const thumbTip = hand.joints['thumb-tip'];
+  const indexTip = hand.joints['index-finger-tip'];
+
+  if (!thumbTip || !indexTip) return false;
+
+  const distance = thumbTip.position.distanceTo(indexTip.position);
+  const PINCH_THRESHOLD = 0.025; // 2.5cm
+  return distance < PINCH_THRESHOLD;
 }
 
 function handleNonVrPreviousButton() {
@@ -414,12 +558,52 @@ function updateCameraPosition() {
     const indexFingerTipPosR = hand1.joints['index-finger-tip'].position;
     gesture_control.updateLeftHand(indexFingerTipPosL);
     gesture_control.updateRightHand(indexFingerTipPosR);
+
+    // Detect pinch state from hand tracking
+    const leftPinching = detectPinch(hand0, true);
+    const rightPinching = detectPinch(hand1, false);
+
+    // Update pinch state
+    if (leftPinching && !gesture_control.isLeftPinching) {
+      gesture_control.leftPinchStart();
+      debugLog('[Hand] Left pinch start');
+    } else if (!leftPinching && gesture_control.isLeftPinching) {
+      gesture_control.leftPinchEnd();
+      debugLog('[Hand] Left pinch end');
+    }
+
+    if (rightPinching && !gesture_control.isRightPinching) {
+      gesture_control.rightPinchStart();
+      debugLog('[Hand] Right pinch start');
+    } else if (!rightPinching && gesture_control.isRightPinching) {
+      gesture_control.rightPinchEnd();
+      debugLog('[Hand] Right pinch end');
+    }
+
     gesture_control.updateTransformation(world_group.position, media_mesh.position);
   } else if (vr_controller0 && vr_controller1) {
     updateGamepad(vr_controller0, "left");
     updateGamepad(vr_controller1, "right");
     gesture_control.updateLeftHand(vr_controller0.position);
     gesture_control.updateRightHand(vr_controller1.position);
+
+    // Use grip/squeeze for pinch state on controllers
+    const leftGrip = vr_controller0.gamepad && vr_controller0.gamepad.buttons[1] &&
+                     vr_controller0.gamepad.buttons[1].value > 0.5;
+    const rightGrip = vr_controller1.gamepad && vr_controller1.gamepad.buttons[1] &&
+                      vr_controller1.gamepad.buttons[1].value > 0.5;
+
+    if (leftGrip && !gesture_control.isLeftPinching) {
+      gesture_control.leftPinchStart();
+    } else if (!leftGrip && gesture_control.isLeftPinching) {
+      gesture_control.leftPinchEnd();
+    }
+    if (rightGrip && !gesture_control.isRightPinching) {
+      gesture_control.rightPinchStart();
+    } else if (!rightGrip && gesture_control.isRightPinching) {
+      gesture_control.rightPinchEnd();
+    }
+
     gesture_control.updateTransformation(world_group.position, media_mesh.position);
   }
 
@@ -473,6 +657,15 @@ function updateCameraPosition() {
 
 
 function render() {
+  // Update fade transition animation
+  updateFadeTransition();
+
+  // Update slide gesture for image navigation
+  updateSlideGesture();
+
+  // Update debug display with current state
+  updateDebugDisplay();
+
   // The fragment shader uses the distance from the camera to the origin to determine how
   // aggressively to fade out fragments that might be part of a streaky triangle. We need
   // to compute that distance differently depending on whether we are in VR or not.
@@ -900,14 +1093,18 @@ export function init({
   // for more examples of using HTMLMesh.
   if (enable_debug_text) {
     debug_text_div = document.createElement("debug_text_div");
-    debug_text_div.innerHTML = "";
-    debug_text_div.style.width = '400px';
-    debug_text_div.style.height = '600px';
-    debug_text_div.style.backgroundColor = 'rgba(128, 128, 128, 0.9)';
-    debug_text_div.style.fontFamily = 'Arial';
-    debug_text_div.style.fontSize = '14px';
-    debug_text_div.style.padding = '10px';
-    debug_text_div.style.color = 'black';
+    debug_text_div.textContent = "Debug Console - Initializing...";
+    debug_text_div.style.width = '500px';
+    debug_text_div.style.height = '400px';
+    debug_text_div.style.backgroundColor = 'rgba(0, 0, 0, 0.85)';
+    debug_text_div.style.fontFamily = 'Consolas, Monaco, monospace';
+    debug_text_div.style.fontSize = '12px';
+    debug_text_div.style.padding = '15px';
+    debug_text_div.style.color = '#00ff00';
+    debug_text_div.style.borderRadius = '8px';
+    debug_text_div.style.border = '1px solid #00ff00';
+    debug_text_div.style.overflow = 'hidden';
+    debug_text_div.style.whiteSpace = 'pre-wrap';
 
     // We have to add the div to the document.body or it wont render.
     // But to keep it out of view (in 2D), move it far offscreen.
@@ -917,12 +1114,17 @@ export function init({
     document.body.appendChild(debug_text_div);
 
     debug_text_mesh = new HTMLMesh(debug_text_div);
-    debug_text_mesh.position.x = -0.5;
-    debug_text_mesh.position.y = 0.25;
-    debug_text_mesh.position.z = -1.5;
-    debug_text_mesh.rotation.y = Math.PI / 9;
-    debug_text_mesh.scale.setScalar(1.0);
+    // Position to the left side of view, easy to see
+    debug_text_mesh.position.x = -0.8;
+    debug_text_mesh.position.y = 0.0;
+    debug_text_mesh.position.z = -1.2;
+    debug_text_mesh.rotation.y = Math.PI / 6; // Angle slightly toward user
+    debug_text_mesh.scale.setScalar(0.8);
     interface_group.add(debug_text_mesh);
+
+    // Log initial message
+    debugLog('[Init] Debug console enabled');
+    debugLog('[Init] Image count: ' + media_playlist.length);
   }
 
   // Title text
