@@ -18,8 +18,11 @@ A web-based VR viewer for exploring [Philippe Jaulmes' Panrama](https://www.panr
 | Desktop | Zoom | Scroll wheel |
 | Desktop | Navigate images | Arrow keys or buttons |
 | VR | Navigate images | A button (next) / B button (previous) |
-| VR | Navigate images | Trigger (next) / Grip (previous) |
-| VR | Hand tracking | Pinch gestures for scale/rotate |
+| VR | Navigate images | Joystick left/right |
+| VR | Slide transition | Trigger + slide controller |
+| VR | Hand tracking | Pinch + slide for smooth transitions |
+
+**VR Slide Transition:** Hold trigger (or pinch with hand tracking) and slide left/right to preview the transition. Release past 50% to navigate, or release before 50% to cancel and stay on current image.
 
 ## Credits
 

@@ -31,7 +31,8 @@ media/                       # Panoramic images (~22 images)
 
 - **Format modes**: `vr180` (stereo), `sbs` (side-by-side), `180` (mono) - set in init()
 - **Playlist**: Array of image paths in index.html, navigated with prev/next
-- **Controls**: Desktop (mouse/keyboard/scroll), VR (controllers A/B buttons, triggers, hand tracking)
+- **Controls**: Desktop (mouse/keyboard/scroll), VR (A/B buttons, joystick, trigger+slide, hand pinch+slide)
+- **VR UI**: Progress bar shows slide position, image counter shows current/total
 - **Rendering**: Two-pass (world_group for content, interface_group for UI)
 
 ## Development
